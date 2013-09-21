@@ -36,24 +36,31 @@ RELSYSDIR = $(RELEASE_PATH)/lib/percept2-$(VSN)
 
 MODULES= \
 	egd \
-	egd_png \
-	egd_font \
-	egd_render \
-	egd_primitives \
+        egd_font \
+ 	egd_png \
+        egd_primitives \
+ 	egd_render \
 	gen_plt_script \
-	multi_node_trace \
 	percept2 \
+        percept2_analyzer \
+	percept2_ast_server \
+	percept2_callgraph \
 	percept2_data_gen \
 	percept2_db \
 	percept2_dot \
+	percept2_epp_dodger \
+        percept2_graph \
 	percept2_html \
 	percept2_image \
-	percept2_graph \
-	percept2_analyzer \
-	percept2_profile \
+	percept2_io \
+        percept2_multi_node_trace \
+	percept2_parse \
+ 	percept2_profile \
 	percept2_sampling \
+	percept2_scan \
+	percept2_smell_detection \
+	percept2_syntax \
 	percept2_utils
-
 
 HRL_FILES= ../include/egd.hrl ../include/percept2.hrl
 
