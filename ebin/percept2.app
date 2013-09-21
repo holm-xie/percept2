@@ -19,7 +19,7 @@
 
 {application,percept2,
 	[{description, 	"An Enhanced version of the Erlang Concurrency Profiling Tool Percept"},
-	 {vsn,		"1.0"},
+	 {vsn,		"%VSN%"},
  	 {modules,	[egd.erl,
                          egd_font,
                          egd_png,
