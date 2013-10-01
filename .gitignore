@@ -5,6 +5,7 @@ autom4te.cache
 *.dat
 *.txt
 *~
+ebin/
 
 # Auto-generated files
 src/percept2_parse.erl
