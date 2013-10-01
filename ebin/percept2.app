@@ -19,14 +19,14 @@
 
 {application,percept2,
 	[{description, 	"An Enhanced version of the Erlang Concurrency Profiling Tool Percept"},
-	 {vsn,		"%VSN%"},
+	 {vsn,		"1.0.0"},
  	 {modules,	[egd.erl,
                          egd_font,
                          egd_png,
                          egd_primitives,
                          egd_render,
                          gen_plt_script,
-                         percept2_multi_node_trace,
+                         multi_node_trace,
                          percept2,
                          percept2_analyzer,
                          percept2_data_gen,
@@ -42,6 +42,3 @@
 	 {applications,	[kernel,stdlib]},
 	 {env,		[]}
 	]}.
-
-
-
