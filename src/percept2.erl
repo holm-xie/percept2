@@ -56,7 +56,12 @@
          
          analyze/1,
          analyze/4,
-         stop_db/0]).
+         stop_db/0,
+
+         dt_start_profile/3,
+         dt_stop_profile/0,
+         dt_analyze/1,
+         dt_analyze/4]).
 
 %% Application callback functions.
 -export([start/2, stop/1, parse_and_insert/3]).
@@ -316,6 +321,19 @@ flush() ->
     after 0 ->
             ok
     end.
+
+dt_start_profile(Nodes, FileSpec, Options) ->
+    ok.
+
+dt_stop_profile() ->
+    ok.
+
+dt_analyze(FileNames) ->
+    ok.
+
+dt_analyze(FileName, Suffix, StartIndex, EndIndex) ->
+    ok.
+
 %% @spec start_webserver() -> {started, Hostname, Port} | {error, Reason}
 %%	Hostname = string()
 %%	Port = integer()
