@@ -4,18 +4,14 @@
 
 start_profile(Ns, FN, Opts) ->
     case profile_started() of
-        false ->
-            do_start_profile(Ns, FN, Opts);
-        true  ->
-            {error, already_started}
+        false -> do_start_profile(Ns, FN, Opts);
+        true  -> {error, already_started}
     end.
 
 stop_profile() ->
     case profile_started() of
-        false ->
-            {error, not_started};
-        true ->
-            do_stop_profile()
+        false -> {error, not_started};
+        true  -> do_stop_profile()
     end.
 
 do_start_profile(Ns, FN, Opts) ->
@@ -36,10 +32,8 @@ do_stop_profile() ->
 
 profile_started() ->
     case ets:info(profile_details) of
-        undefined -> 
-            false;
-        _         ->
-            true
+        undefined -> false;
+        _         -> true
     end.
 
 spawn_profilers(Ns, C, Opts) ->
@@ -75,8 +69,8 @@ loop(F) ->
         stop   ->
             io:format(F, "~p.~n", [{profile_stop, erlang:now()}]),
             ok = file:close(F);
-        {_P, M} ->
-            io:format(F, "~p.~n", [M]),
+        {_, TraceMsg} ->
+            io:format(F, "~p.~n", [TraceMsg]),
             loop(F)
     end.
 
