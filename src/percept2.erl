@@ -58,13 +58,13 @@
          analyze/4,
          stop_db/0,
 
+         dt_start_profile/2,
          dt_start_profile/3,
          dt_stop_profile/0,
-         dt_analyze/1,
-         dt_analyze/4]).
+         dt_analyze/1]).
 
 %% Application callback functions.
--export([start/2, stop/1, parse_and_insert/3]).
+-export([start/2, stop/1, parse_and_insert/3, dt_parse_and_insert/3]).
 
 -compile(export_all).
 
@@ -322,16 +322,87 @@ flush() ->
             ok
     end.
 
-dt_start_profile(Nodes, FileSpec, Options) ->
-    ok.
+dt_start_profile(FN, Opts) ->
+    dt_start_profile([node()], FN, Opts).
+
+dt_start_profile(Nds, FN, Opts) ->
+    dyncoordinator:start_profile(Nds, FN, Opts).
 
 dt_stop_profile() ->
-    ok.
+    dyncoordinator:stop_profile().
 
-dt_analyze(FileNames) ->
-    ok.
+dt_analyze(FNs) ->
+    case percept2_db:start(FNs) of
+        {started, FNsSubDBs} ->
+            dt_do_analyze(FNsSubDBs);
+        {restarted, FNsSubDBs} ->
+            dt_do_analyze(FNsSubDBs)
+    end.
 
-dt_analyze(FileName, Suffix, StartIndex, EndIndex) ->
+dt_do_analyze(FNsSubDBs) ->
+    Self = self(),
+    process_flag(trap_exit, true),
+    case whereis(percept_httpd) of
+        undefined ->
+            ok;
+        _         ->
+            TmpDir = get_svg_alias_dir(),
+            rm_tmp_files(TmpDir)
+    end,
+    Anlzrs = lists:foldl(fun({FN, SubDB}, Pids) ->
+                             Pid = spawn_link(?MODULE, dt_parse_and_insert, [FN, SubDB, Self]),
+                             receive
+                                 {started, {FN, SubDB}} ->
+                                     [Pid | Pids]
+                             end
+                         end, [], FNsSubDBs),
+    dt_loop_analyzers(Anlzrs).
+
+dt_loop_analyzers(Anlzrs) ->
+    receive
+        {Pid, done} ->
+            case Anlzrs -- [Pid] of
+                [] ->
+                    try percept2_db:consolidate_db()
+                    catch _E1:_E2 -> ok
+                    end,
+                    io:format("    ~p created processes.~n",
+                              [percept2_db:select({information, procs_count})]),
+                    io:format("    ~p opened ports.~n",
+                              [percept2_db:select({information, ports_count})]);
+                AnlzrsLeft ->
+                    dt_loop_analyzers(AnlzrsLeft)
+            end;
+        {error, Reason} ->
+            percept2_db:stop(percept2_db),
+            flush(),
+            {error, Reason};
+        _Other ->
+            dt_loop_analyzers(Anlzrs)
+    end.
+
+dt_parse_and_insert(FN, SubDB, C) ->
+    io:format("Parsing: ~p ~n", [FN]),
+    T0 = erlang:now(),
+    C ! {started, {FN, SubDB}},
+    case file:consult(FN) of
+        {ok, FPrbs}     -> 
+            dt_parse_and_insert_loop(FPrbs, C, FN, SubDB, T0, 0);
+        {error, Reason} -> 
+            C ! {error, Reason}
+    end.
+
+dt_parse_and_insert_loop([], C, FN, _, T0, Count) ->
+    T1 = erlang:now(),
+    io:format("Parsed ~p entries from ~p in ~p secs.~n", [Count, FN, ?seconds(T1, T0)]),
+    C ! {self(), done};
+dt_parse_and_insert_loop([FPrb|FPrbs], C, FN, SubDB, T0, Count) ->
+    TM = fprb2trcmsg(FPrb),
+    M = {insert, TM},
+    SubDB ! M,
+    dt_parse_and_insert_loop(FPrbs, C, FN, SubDB, T0, Count + 1).
+
+fprb2trcmsg({call, P, MFA, Ts}) ->
     ok.
 
 %% @spec start_webserver() -> {started, Hostname, Port} | {error, Reason}
@@ -361,7 +432,7 @@ start_webserver(Port) when is_integer(Port) ->
 		{ok, Pid} ->
 		    AssignedPort = find_service_port_from_pid(inets:services_info(), Pid),
 		    {ok, Host} = inet:gethostname(),
-                    TmpDir= get_svg_alias_dir(Config),
+                    TmpDir = get_svg_alias_dir(Config),
 		    %% workaround until inets can get me a service from a name.
 		    Mem = spawn(fun() -> service_memory({Pid,AssignedPort,Host, TmpDir}) end),
 		    register(percept_httpd, Mem),

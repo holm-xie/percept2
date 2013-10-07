@@ -197,7 +197,8 @@ is_database_loaded() ->
 
 %% @doc Inserts a trace or profile message to the database.  
 -spec insert(pid()|atom(), tuple()) -> ok.
-insert(SubDB, Trace) -> 
+insert(SubDB, Trace) ->
+    io:format("~p~n", [Trace]), 
     SubDB ! {insert, Trace},
     ok.
 

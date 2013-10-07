@@ -1,143 +1,207 @@
 -module(dynprofiler).
 
--export([run/0]).
+-export([run/2]).
 
-%-define(DEBUG, true).
+run(C, Opts) ->
+    DTF = erlang:system_info(dynamic_trace),
+    {Prbs, Mods} = opts2prbs(Opts),
+    S = gen_script(DTF, Prbs, Mods),
+    SF = save_script(S),
+    loop(DTF, SF, C).
 
--ifdef(DEBUG).
--define(DBG(S), dbg(S)).
--else.
--define(DBG(_), ok).
--endif.
+loop(DTF, SF, C) ->
+    receive
+        start                    ->
+            Cmd = fmt_command(DTF, SF),
+            P = open_port({spawn, Cmd}, [{line, 1024}]),
+            put(port, P),
+            loop(DTF, SF, C);
+        stop                     ->
+            P = get(port),
+            true = port_close(P),
+            ok = file:delete(SF);
+        {_, {data, {eol, Data}}} ->
+            C ! {self(), Data},
+            loop(DTF, SF, C)
+    end.
 
--type dynutil() :: dtrace | systemtap.
+opts2prbs(Opts) ->
+    {Prbs, Mods} = opts2prbs(Opts, {[], []}),
+    {lists:usort(Prbs), lists:usort(Mods)}.
+opts2prbs([], {Prbs, Mods}) ->
+    {Prbs, Mods};
+opts2prbs([procs|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['process-active', 'process-inactive', 'process-spawn',
+                      'process-exit', 'process-registered', 'process-unregistered',
+                      'process-link', 'process-unlink', 'process-getting_linked', 
+                      'process-getting_unlinked', 'process-exclusive_active',
+                      'process-exclusive_inactive' | Prbs], Mods});
+opts2prbs([ports|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['port-active', 'port-inactive', 'port-open', 
+                      'port-exit', 'port-registered', 'port-unregistered' | Prbs], Mods});
+opts2prbs([schedulers|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['scheduler-active', 'scheduler-inactive' | Prbs], Mods});
+opts2prbs([running|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['process-active', 'process-inactive', 'process-spawn',
+                      'process-exit', 'process-registered', 'process-unregistered',
+                      'process-link', 'process-unlink', 'process-getting_linked',
+                      'process-getting_unlinked', 'process-exclusive_active',
+                      'process-exclusive_inactive', 'process-scheduled', 'process-unscheduled',
+                      'process-scheduled_exiting', 'process-unscheduled_exiting',
+                      'process-unscheduled_exited' | Prbs], Mods});
+opts2prbs([message|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['process-active', 'process-inactive', 'process-spawn',
+                      'process-exit', 'process-registered', 'process-unregistered',
+                      'process-link', 'process-unlink', 'process-getting_linked',
+                      'process-getting_unlinked', 'process-exclusive_active',
+                      'process-exclusive_inactive', 'message-send', 'message-queued' | Prbs], Mods});
+opts2prbs([migration|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['process-active', 'process-inactive', 'process-spawn',
+                      'process-exit', 'process-registered', 'process-unregistered',
+                      'process-link', 'process-unlink', 'process-getting_linked',
+                      'process-getting_unlinked', 'process-exclusive_active',
+                      'process-exclusive_inactive', 'process-scheduled', 'process-unscheduled',
+                      'process-migrate' | Prbs], Mods});
+opts2prbs([garbage_collection|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['process-active', 'process-inactive', 'process-spawn',
+                      'process-exit', 'process-registered', 'process-unregistered',
+                      'process-link', 'process-unlink', 'process-getting_linked',
+                      'process-getting_unlinked', 'process-exclusive_active',
+                      'process-exclusive_inactive', 'gc_major-start', 'gc_minor-start',
+                      'gc_major-end', 'gc_minor-end' | Prbs], Mods});
+opts2prbs([all|Opts], {Prbs, Mods}) ->
+    opts2prbs([procs, ports, schedulers, running, message, migration | Opts], {Prbs, Mods});
+opts2prbs([{callgraph, [Ms]}|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {['process-active', 'process-inactive', 'process-spawn',
+                      'process-exit', 'process-registered', 'process-unregistered',
+                      'process-link', 'process-unlink', 'process-getting_linked',
+                      'process-getting_unlinked', 'process-exclusive_active',
+                      'process-exclusive_inactive', 'process-scheduled', 'process-unscheduled',
+                      'local-function-entry', 'global-function-entry', 'bif-entry', 'nif-entry',
+                      'function-return', 'bif-return', 'nif-return' | Prbs], Mods ++ Ms});
+opts2prbs([_Opt|Opts], {Prbs, Mods}) ->
+    opts2prbs(Opts, {Prbs, Mods}).
 
-run() ->
-  ?DBG("Waiting for 'start_trace'."),
-  Coordinator = receive
-                  {C, start_trace} -> ?DBG("Starting."), C
-                end,
-  %% Run the tracer
-  TraceUtil = case erlang:system_info(dynamic_trace) of
-                none -> erlang:exit({?MODULE, run,
-                                     "Dynamic tracing is not available!"});
-                T    -> T
-              end,
-  %%  Script = "./dt-percept2.systemtap", %%XXX: Use this if it doesn't work! :)
-  Script = create_script_file(systemtap, [call]),
-  Cmd = fmt_command(TraceUtil, os:getpid(), Script),
-  ?DBG("Port command: " ++ Cmd),
-  Port = open_port({spawn, Cmd}, [{line, 1024}]),
-  %% Receive from port
-  loop(Port, Coordinator).
+gen_script(DTF, Prbs, Mods) ->
+    fl([mk_probe(DTF, Prb, Mods) || Prb <- Prbs]).
 
-
-loop(Port, Coordinator) ->
-  receive
-    {Port, {data, {eol, Data}}} ->
-      ?DBG(iof("Data: ~s", [Data])),
-      Coordinator ! {self(), Data},
-      loop(Port, Coordinator);
-    close_port ->
-      ?DBG("Closing port."),
-      true = port_close(Port)
-  end.
-
-
-create_script_file(systemtap, Flags) ->
-  Filename = "/tmp/trace-script" ++ unique_id() ++ ".systemtap",
-  {ok, ScriptF} = file:open(Filename, [append, raw]),
-  %% Create script
-  ScriptS = gen_trace_script(systemtap, Flags),
-  %% Dump to file
-  ok = file:write(ScriptF, ScriptS),
-  file:close(ScriptF),
-  Filename.
-
-unique_id() ->
-  integer_to_list(erlang:phash2({softlab, 42, now()})).
-
--spec fmt_command(dynutil(), pid(), string()) -> string().
-fmt_command(systemtap, TraceePid, Script) ->
-  Path = filename:dirname(os:find_executable(get_vm_executable())),
-  fl(iof("env PATH=~s/:$PATH ~p -x ~s ~s", [Path, stap, TraceePid, Script])).
-
-get_vm_executable() ->
-  case erlang:system_info(smp_support) of
-    true  -> "beam.smp";
-    false -> "beam"
-  end.
-
-
-%% Functions to generate trace script
--spec gen_trace_script(dynutil(), [atom()]) -> string().
-gen_trace_script(Util, Flags) ->
-    gen_trace_script(Util, Flags, []).
-
--spec gen_trace_script(dynutil(), [atom()], [string()]) -> string().
-gen_trace_script(_, [], Acc) ->
-    fl(lists:reverse(Acc));
-gen_trace_script(Util, [Flag|Flags], Acc) ->
-    Probes = flag2probes(Flag),
-    PPProbes = [mk_probe(Util, Probe) || Probe <- Probes],
-    gen_trace_script(Util, Flags,
-                     [["// ", atom_to_list(Flag), "\n", PPProbes, "\n"] | Acc]).
-
-
--spec mk_probe(dynutil(), string()) -> string().
-mk_probe(systemtap, Probe) ->
-    EmuSuffix = case erlang:system_info(multi_scheduling) of
-                    disabled -> "";
-                    _        -> ".smp"
-                end,
-    fl(["probe process(\"beam", EmuSuffix, "\").mark(\"", Probe, "\") {\n",
-        mk_body(systemtap, Probe),
+mk_probe(systemtap, Prb, Mods) ->
+    fl(["probe process(\"", get_vm_executable(), "\").mark(\"", Prb, "\") {\n", 
+        mk_body(systemtap, Prb, Mods), 
         "}\n"]);
-mk_probe(dtrace, Probe) ->
-    fl(["erlang*:::", Probe, " {\n",
-        mk_body(dtrace, Probe),
+mk_probe(dtrace, Prb, Mods) ->
+    fl(["erlang*:::", Prb, " {\n", 
+        mk_body(dtrace, Prb, Mods), 
         "}\n"]).
 
+mk_body(systemtap, 'bif-entry', _Mods) ->
+    "\tprintf(\"{ 'call', \\\"%s\\\", \\\"%s\\\", %d }\\n\", user_string($arg1), user_string($arg2), $arg3);\n";
+mk_body(systemtap, 'bif-return', _Mods) ->
+    "";
+mk_body(systemtap, 'function-return', _Mods) ->
+    "";
+mk_body(systemtap, 'gc_major-end', _) ->
+    "";
+mk_body(systemtap, 'gc_major-start', _) ->
+    "";
+mk_body(systemtap, 'gc_minor-end', _) ->
+    "";
+mk_body(systemtap, 'gc_minor-start', _) ->
+    "";
+mk_body(systemtap, 'global-function-entry', _Mods) ->
+    "\tprintf(\"{ 'call', \\\"%s\\\", \\\"%s\\\", %d }\\n\", user_string($arg1), user_string($arg2), $arg3);\n";
+mk_body(systemtap, 'local-function-entry', _Mods) ->
+    "\tprintf(\"{ 'call', \\\"%s\\\", \\\"%s\\\", %d }\\n\", user_string($arg1), user_string($arg2), $arg3);\n";
+mk_body(systemtap, 'message-queued', _) ->
+    "";
+mk_body(systemtap, 'message-send', _) ->
+    "";
+mk_body(systemtap, 'nif-entry', _Mods) ->
+    "";
+mk_body(systemtap, 'nif-return', _Mods) ->
+    "";
+mk_body(systemtap, 'port-active', _) ->
+    "";
+mk_body(systemtap, 'port-exit', _) ->
+    "";
+mk_body(systemtap, 'port-inactive', _) ->
+    "";
+mk_body(systemtap, 'port-open', _) ->
+    "";
+mk_body(systemtap, 'port-registered', _) ->
+    "";
+mk_body(systemtap, 'port-unregistered', _) ->
+    "";
+mk_body(systemtap, 'process-active', _) ->
+    "";
+mk_body(systemtap, 'process-exclusive_active', _) ->
+    "";
+mk_body(systemtap, 'process-exclusive_inactive', _) ->
+    "";
+mk_body(systemtap, 'process-exit', _) ->
+    "";
+mk_body(systemtap, 'process-getting_linked', _) ->
+    "";
+mk_body(systemtap, 'process-getting_unlinked', _) ->
+    "";
+mk_body(systemtap, 'process-inactive', _) ->
+    "";
+mk_body(systemtap, 'process-link', _) ->
+    "";
+mk_body(systemtap, 'process-migrate', _) ->
+    "";
+mk_body(systemtap, 'process-registered', _) ->
+    "";
+mk_body(systemtap, 'process-scheduled', _) ->
+    "";
+mk_body(systemtap, 'process-scheduled_exiting', _) ->
+    "";
+mk_body(systemtap, 'process-spawn', _) ->
+    "";
+mk_body(systemtap, 'process-unlink', _) ->
+    "";
+mk_body(systemtap, 'process-unregistered', _) ->
+    "";
+mk_body(systemtap, 'process-unscheduled', _) ->
+    "";
+mk_body(systemtap, 'process-unscheduled_exited', _) ->
+    "";
+mk_body(systemtap, 'process-unscheduled_exiting', _) ->
+    "";
+mk_body(systemtap, 'scheduler-active', _) ->
+    "";
+mk_body(systemtap, 'scheduler-inactive', _) ->
+    "".
 
--spec mk_body(dynutil(), string()) -> string().
-mk_body(systemtap, "message-queued") ->
-    "\tprintf(\"{ 'message-queued', \\\"%s\\\", %d }.\\n\", user_string($arg1), $arg2);\n";
-mk_body(systemtap, "message-send") ->
-    "\tprintf(\"{ 'message-send', \\\"%s\\\", \\\"%s\\\", %d }.\\n\", user_string($arg1), user_string($arg2), $arg3);\n";
-mk_body(systemtap, "local-function-entry") ->
-    "\tprintf(\"{ 'function-call', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "global-function-entry") ->
-    "\tprintf(\"{ 'function-call', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "bif-entry") ->
-    "\tprintf(\"{ 'function-call', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "nif-entry") ->
-    "\tprintf(\"{ 'function-call', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "function-return") ->
-    "\tprintf(\"{ 'function-return', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "bif-return") ->
-    "\tprintf(\"{ 'function-return', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "nif-return") ->
-    "\tprintf(\"{ 'function-return', \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2));\n";
-mk_body(systemtap, "process-spawn") ->
-    "\tprintf(\"{ 'process-spawn', \\\"%s\\\", \\\"%s\\\", \\\"%s\\\" }.\\n\", user_string($arg1), user_string($arg2), user_string($arg3));\n".
+save_script(S) ->
+    SFN = filename:join([code:priv_dir(percept2), "trace-script-" ++ unique_id()]),
+    {ok, SF} = file:open(SFN, [write, raw]),
+    ok = file:write(SF, S),
+    file:close(SF),
+    SFN.
 
+unique_id() ->
+    integer_to_list(erlang:phash2({softlab, 24, now()})).
 
--spec flag2probes(atom()) -> [string()].
-flag2probes('receive') ->
-    ["message-queued"];
-flag2probes(send) ->
-    ["message-send"];
-flag2probes(call) ->
-    ["local-function-entry", "global-function-entry", "bif-entry", "nif-entry"];
-flag2probes(return_to) ->
-    ["function-return", "bif-return", "nif-return"];
-flag2probes(spawn) ->
-    ["process-spawn"];
-flag2probes(Flag) ->
-    erlang:exit({?MODULE, flag2probe, "Unknown trace/profile flag!", Flag}).
+fmt_command(DTF, SF) ->
+    T = os:getpid(),
+    P = filename:dirname(os:find_executable(get_vm_executable())),
+    Cmd = case DTF of
+              dtrace    ->
+                  "dtrace -p " ++ T ++ " " ++ SF;
+              systemtap ->
+                  "stap -x " ++ T ++ " " ++ SF
+          end,
+    "env PATH=" ++ P ++ "/:$PATH " ++ Cmd.
 
+get_vm_executable() ->
+    case erlang:system_info(multi_scheduling) of
+        disabled ->
+            "beam";
+        _        ->
+            "beam.smp"
+    end.
 
-%% Auxiliary functions
-fl(L) -> lists:flatten(L).
-iof(Fmt, LS) -> io_lib:format(Fmt, LS).
-dbg(S) -> io:format("[DEBUG] ~s~n", [S]).
+fl(L) -> 
+    lists:flatten(L).
+
