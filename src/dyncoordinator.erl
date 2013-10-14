@@ -58,19 +58,21 @@ spawn_collector(FN) ->
     spawn(?MODULE, collect, [FN]).
 
 collect(FN) ->
-    {ok, F} = file:open(FN, [write]),
+    {ok, F} = file:open(FN, [write, raw]),
     loop(F).
 
 loop(F) ->
     receive
         start  ->
-            io:format(F, "~p.~n", [{profile_start, erlang:now()}]),
+            S = iof("{ profile_start, ~p }.\n", [erlang:now()]),
+            ok = file:write(F, S),
             loop(F);
         stop   ->
-            io:format(F, "~p.~n", [{profile_stop, erlang:now()}]),
+            S = iof("{ profile_stop, ~p }.\n", [erlang:now()]),
+            ok = file:write(F, S),
             ok = file:close(F);
         {_, TraceMsg} ->
-            io:format(F, "~p.~n", [TraceMsg]),
+            ok = file:write(F, TraceMsg ++ ".\n"),
             loop(F)
     end.
 
@@ -100,3 +102,5 @@ retrieve_profile_details() ->
     [{profilers, Ps}] = ets:lookup(profile_details, profilers),
     [{collector, C}] = ets:lookup(profile_details, collector),
     {PNs, Ps, C}.
+
+iof(Fmt, D) -> io_lib:format(Fmt, D).

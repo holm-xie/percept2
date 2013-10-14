@@ -198,7 +198,6 @@ is_database_loaded() ->
 %% @doc Inserts a trace or profile message to the database.  
 -spec insert(pid()|atom(), tuple()) -> ok.
 insert(SubDB, Trace) ->
-    io:format("~p~n", [Trace]), 
     SubDB ! {insert, Trace},
     ok.
 
@@ -808,6 +807,13 @@ trace_receive(SubDBIndex, _Trace={trace_ts, Pid, 'receive', Msg, _Ts}) ->
             update_information_received(ProcRegName, Pid, byte_size(term_to_binary(Msg)));
        true ->
             ok
+    end;
+trace_receive(SubDBIndex, _Trace={trace_ts, Pid, 'receive', _Msg, Sz, _Ts}) ->
+    if is_pid(Pid) ->
+            ProcRegName = mk_proc_reg_name("pdb_info", SubDBIndex),
+            update_information_received(ProcRegName, Pid, Sz);
+       true ->
+            ok
     end.
 
 trace_send(SubDBIndex,_Trace= {trace_ts, Pid, send, Msg, To, Ts}) ->
@@ -830,6 +836,13 @@ trace_send(SubDBIndex,_Trace= {trace_ts, Pid, send, Msg, To, Ts}) ->
             %%         end;
             %%    true -> ok
             %% end;       
+       true ->
+            ok
+    end;
+trace_send(SubDBIndex,_Trace= {trace_ts, Pid, send, _Msg, MsgSize, To, Ts}) ->
+    if is_pid(Pid) ->
+            ProcRegName = mk_proc_reg_name("pdb_info", SubDBIndex),
+            update_information_sent(ProcRegName, Pid, MsgSize, To, Ts);
        true ->
             ok
     end.
@@ -1554,7 +1567,7 @@ init_pdb_system(ProcRegName, Parent)->
     pdb_system_loop().
 
 update_system_start_ts(SystemProcRegName, TS) ->
-    SystemProcRegName ! {'update_system_start_ts', TS}.
+     SystemProcRegName ! {'update_system_start_ts', TS}.
 
 update_system_stop_ts(SystemProcRegName, TS) ->
     SystemProcRegName ! {'update_system_stop_ts', TS}.

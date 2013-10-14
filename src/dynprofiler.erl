@@ -6,8 +6,8 @@ run(Coordinator, Opts) ->
     DTFramework = erlang:system_info(dynamic_trace),
     %% XXX: DTFramework should never be 'none' here (already handled in
     %% dyncoordinator.erl).
-    {Prbs, Mods} = opts2prbs(Opts),
-    Script  = gen_script(DTFramework, Prbs, Mods),
+    {Prbs, Mods, Flags} = opts2prbs(Opts),
+    Script  = gen_script(DTFramework, Prbs, Mods, Flags),
     ScriptF = save_script(Script),
     loop(DTFramework, ScriptF, Coordinator).
 
@@ -28,170 +28,174 @@ loop(DTFramework, ScriptF, Coordinator) ->
     end.
 
 opts2prbs(Opts) ->
-    {Prbs, Mods} = opts2prbs(Opts, {[], []}),
-    {lists:usort(Prbs), lists:usort(Mods)}.
-opts2prbs([], {Prbs, Mods}) ->
-    {Prbs, Mods};
-opts2prbs([procs|Opts], {Prbs, Mods}) ->
+    {Prbs, Mods, Flags} = opts2prbs(Opts, {[], [], []}),
+    {lists:usort(Prbs), lists:usort(Mods), lists:usort(Flags)}.
+opts2prbs([], {Prbs, Mods, Flags}) ->
+    {Prbs, Mods, Flags};
+opts2prbs([procs|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['process-active', 'process-inactive',
                       'process-spawn', 'process-exit',
-                      'process-registered', 'process-unregistered',
-                      'process-link', 'process-unlink',
-                      'process-getting_linked', 'process-getting_unlinked',
-                      'process-exclusive_active', 'process-exclusive_inactive'
-                      | Prbs], Mods});
-opts2prbs([ports|Opts], {Prbs, Mods}) ->
+                      'process-registered', 'process-exclusive_active', 
+                      'process-exclusive_inactive' 
+                      | Prbs], Mods, Flags});
+opts2prbs([ports|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['port-active', 'port-inactive',
-                      'port-open', 'port-exit',
-                      'port-registered', 'port-unregistered' | Prbs], Mods});
-opts2prbs([schedulers|Opts], {Prbs, Mods}) ->
-    opts2prbs(Opts, {['scheduler-active', 'scheduler-inactive' | Prbs], Mods});
-opts2prbs([running|Opts], {Prbs, Mods}) ->
+                      'port-open', 'port-exit' 
+                      | Prbs], Mods, Flags});
+opts2prbs([schedulers|Opts], {Prbs, Mods, Flags}) ->
+    opts2prbs(Opts, {['scheduler-active', 'scheduler-inactive' 
+                      | Prbs], Mods, Flags});
+opts2prbs([running|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['process-active', 'process-inactive',
                       'process-spawn', 'process-exit',
-                      'process-registered', 'process-unregistered',
-                      'process-link', 'process-unlink',
-                      'process-getting_linked', 'process-getting_unlinked',
-                      'process-exclusive_active', 'process-exclusive_inactive',
-                      'process-scheduled', 'process-unscheduled',
-                      'process-scheduled_exiting', 'process-unscheduled_exiting',
-                      'process-unscheduled_exited' | Prbs], Mods});
-opts2prbs([message|Opts], {Prbs, Mods}) ->
+                      'process-registered', 'process-exclusive_active', 
+                      'process-exclusive_inactive', 'process-scheduled', 
+                      'process-unscheduled' 
+                      | Prbs], Mods, Flags});
+opts2prbs([message|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['process-active', 'process-inactive',
                       'process-spawn', 'process-exit',
-                      'process-registered', 'process-unregistered',
-                      'process-link', 'process-unlink',
-                      'process-getting_linked', 'process-getting_unlinked',
-                      'process-exclusive_active', 'process-exclusive_inactive',
-                      'message-send', 'message-queued' | Prbs], Mods});
-opts2prbs([migration|Opts], {Prbs, Mods}) ->
+                      'process-registered', 'process-exclusive_active', 
+                      'process-exclusive_inactive', 'message-send', 
+                      'message-queued' 
+                      | Prbs], Mods, Flags});
+opts2prbs([migration|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['process-active', 'process-inactive',
                       'process-spawn', 'process-exit',
-                      'process-registered', 'process-unregistered',
-                      'process-link', 'process-unlink',
-                      'process-getting_linked', 'process-getting_unlinked',
-                      'process-exclusive_active', 'process-exclusive_inactive',
-                      'process-scheduled', 'process-unscheduled',
-                      'process-migrate' | Prbs], Mods});
-opts2prbs([garbage_collection|Opts], {Prbs, Mods}) ->
+                      'process-registered', 'process-exclusive_active', 
+                      'process-exclusive_inactive', 'process-scheduled', 
+                      'process-unscheduled' 
+                      | Prbs], Mods, [sched | Flags]});
+opts2prbs([garbage_collection|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['process-active', 'process-inactive',
                       'process-spawn', 'process-exit',
-                      'process-registered', 'process-unregistered',
-                      'process-link', 'process-unlink',
-                      'process-getting_linked', 'process-getting_unlinked',
-                      'process-exclusive_active', 'process-exclusive_inactive',
-                      'gc_major-start', 'gc_minor-start',
-                      'gc_major-end', 'gc_minor-end' | Prbs], Mods});
-opts2prbs([all|Opts], {Prbs, Mods}) ->
+                      'process-registered', 'process-exclusive_active', 
+                      'process-exclusive_inactive', 'gc_major-start', 
+                      'gc_minor-start', 'gc_major-end', 'gc_minor-end' 
+                      | Prbs], Mods, Flags});
+opts2prbs([all|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs([procs, ports, schedulers, running, message, migration | Opts],
-              {Prbs, Mods});
-opts2prbs([{callgraph, [Ms]}|Opts], {Prbs, Mods}) ->
+              {Prbs, Mods, Flags});
+opts2prbs([{callgraph, [Ms]}|Opts], {Prbs, Mods, Flags}) ->
     opts2prbs(Opts, {['process-active', 'process-inactive',
                       'process-spawn', 'process-exit',
-                      'process-registered', 'process-unregistered',
-                      'process-link', 'process-unlink',
-                      'process-getting_linked', 'process-getting_unlinked',
-                      'process-exclusive_active', 'process-exclusive_inactive',
-                      'process-scheduled', 'process-unscheduled',
-                      'local-function-entry', 'global-function-entry',
-                      'bif-entry', 'nif-entry',
-                      'function-return', 'bif-return', 'nif-return' | Prbs],
-                    Mods ++ Ms});
+                      'process-registered', 'process-exclusive_active', 
+                      'process-exclusive_inactive', 'process-scheduled', 
+                      'process-unscheduled', 'local-function-entry', 
+                      'global-function-entry', 'bif-entry', 'nif-entry',
+                      'function-return', 'bif-return', 'nif-return' 
+                      | Prbs], Mods ++ Ms, Flags});
 opts2prbs([_Opt|Opts], {Prbs, Mods}) ->
     opts2prbs(Opts, {Prbs, Mods}).
 
-gen_script(DTFramework, Prbs, Mods) ->
-    fl([mk_probe(DTFramework, Prb, Mods) || Prb <- Prbs]).
+gen_script(DTFramework, Prbs, Mods, Flags) ->
+    fl([mk_probe(DTFramework, Prb, Mods, Flags) || Prb <- Prbs]).
 
-mk_probe(systemtap, Prb, Mods) ->
-    fl(["probe process(\"", get_vm_executable(), "\").mark(\"", Prb, "\") {\n", 
-        mk_body(systemtap, Prb, Mods), "}\n"]).
+mk_probe(systemtap, Prb, Mods, Flags) ->
+    fl(["probe process(\"", get_vm_executable(), "\").mark(\"", 
+        atom_to_list(Prb), "\") {\n", mk_body(systemtap, Prb, Mods, Flags), 
+        "}\n"]).
 
-mk_body(systemtap, 'bif-entry', _Mods) ->
-    fl(["\tprintf(\"{ 'call', \\\"%s\\\", \\\"%s\\\", %d }\\n\",",
+mk_body(systemtap, 'bif-entry', _Mods, _) ->
+    fl(["\tprintf(\"{ 'call', %s, \\\"%s\\\", %d }\\n\",",
         " user_string($arg1), user_string($arg2), $arg3);\n"]);
-mk_body(systemtap, 'bif-return', _Mods) ->
-    "";
-mk_body(systemtap, 'function-return', _Mods) ->
-    "";
-mk_body(systemtap, 'gc_major-end', _) ->
-    "";
-mk_body(systemtap, 'gc_major-start', _) ->
-    "";
-mk_body(systemtap, 'gc_minor-end', _) ->
-    "";
-mk_body(systemtap, 'gc_minor-start', _) ->
-    "";
-mk_body(systemtap, 'global-function-entry', _Mods) ->
-    fl(["\tprintf(\"{ 'call', \\\"%s\\\", \\\"%s\\\", %d }\\n\",",
+mk_body(systemtap, 'bif-return', _Mods, _) ->
+    fl(["\tprintf(\"{ 'return_to', %s, \\\"%s\\\", %d }\\n\",",
         " user_string($arg1), user_string($arg2), $arg3);\n"]);
-mk_body(systemtap, 'local-function-entry', _Mods) ->
-    fl(["\tprintf(\"{ 'call', \\\"%s\\\", \\\"%s\\\", %d }\\n\",",
+mk_body(systemtap, 'function-return', _Mods, _) ->
+    fl(["\tprintf(\"{ 'return_to', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg4);\n"]);
+mk_body(systemtap, 'gc_major-end', _, _) ->
+    fl(["\tprintf(\"{ 'gc_end', %s, %d }\\n\",",
+        " user_string($arg1), $arg4);\n"]);
+mk_body(systemtap, 'gc_major-start', _, _) ->
+    fl(["\tprintf(\"{ 'gc_start', %s, %d }\\n\",",
+        " user_string($arg1), $arg4);\n"]);
+mk_body(systemtap, 'gc_minor-end', _, _) ->
+    fl(["\tprintf(\"{ 'gc_end', %s, %d }\\n\",",
+        " user_string($arg1), $arg4);\n"]);
+mk_body(systemtap, 'gc_minor-start', _, _) ->
+    fl(["\tprintf(\"{ 'gc_start', %s, %d }\\n\",",
+        " user_string($arg1), $arg4);\n"]);
+mk_body(systemtap, 'global-function-entry', _Mods, _) ->
+    fl(["\tprintf(\"{ 'call', %s, \\\"%s\\\", %d }\\n\",",
         " user_string($arg1), user_string($arg2), $arg3);\n"]);
-mk_body(systemtap, 'message-queued', _) ->
-    "";
-mk_body(systemtap, 'message-send', _) ->
-    "";
-mk_body(systemtap, 'nif-entry', _Mods) ->
-    "";
-mk_body(systemtap, 'nif-return', _Mods) ->
-    "";
-mk_body(systemtap, 'port-active', _) ->
-    "";
-mk_body(systemtap, 'port-exit', _) ->
-    "";
-mk_body(systemtap, 'port-inactive', _) ->
-    "";
-mk_body(systemtap, 'port-open', _) ->
-    "";
-mk_body(systemtap, 'port-registered', _) ->
-    "";
-mk_body(systemtap, 'port-unregistered', _) ->
-    "";
-mk_body(systemtap, 'process-active', _) ->
-    "";
-mk_body(systemtap, 'process-exclusive_active', _) ->
-    "";
-mk_body(systemtap, 'process-exclusive_inactive', _) ->
-    "";
-mk_body(systemtap, 'process-exit', _) ->
-    "";
-mk_body(systemtap, 'process-getting_linked', _) ->
-    "";
-mk_body(systemtap, 'process-getting_unlinked', _) ->
-    "";
-mk_body(systemtap, 'process-inactive', _) ->
-    "";
-mk_body(systemtap, 'process-link', _) ->
-    "";
-mk_body(systemtap, 'process-migrate', _) ->
-    "";
-mk_body(systemtap, 'process-registered', _) ->
-    "";
-mk_body(systemtap, 'process-scheduled', _) ->
-    "";
-mk_body(systemtap, 'process-scheduled_exiting', _) ->
-    "";
-mk_body(systemtap, 'process-spawn', _) ->
-    "";
-mk_body(systemtap, 'process-unlink', _) ->
-    "";
-mk_body(systemtap, 'process-unregistered', _) ->
-    "";
-mk_body(systemtap, 'process-unscheduled', _) ->
-    "";
-mk_body(systemtap, 'process-unscheduled_exited', _) ->
-    "";
-mk_body(systemtap, 'process-unscheduled_exiting', _) ->
-    "";
-mk_body(systemtap, 'scheduler-active', _) ->
-    "";
-mk_body(systemtap, 'scheduler-inactive', _) ->
-    "".
+mk_body(systemtap, 'local-function-entry', _Mods, _) ->
+    fl(["\tprintf(\"{ 'call', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'message-queued', _, _) ->
+    fl(["\tprintf(\"{ 'receive', %s, %d, %d }\\n\",",
+        " user_string($arg1), $arg2, $arg7);\n"]);
+mk_body(systemtap, 'message-send', _, _) ->
+    fl(["\tprintf(\"{ 'send', %s, %s, %d, %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3, $arg7);\n"]);
+mk_body(systemtap, 'nif-entry', _Mods, _) ->
+    fl(["\tprintf(\"{ 'call', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'nif-return', _Mods, _) ->
+    fl(["\tprintf(\"{ 'return_to', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'port-active', _, _) ->
+    fl(["\tprintf(\"{ 'active', %s, %d }\\n\",",
+        " user_string($arg1), $arg2);\n"]);
+mk_body(systemtap, 'port-exit', _, _) ->
+    fl(["\tprintf(\"{ 'closed', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg2), user_string($arg4), $arg5);\n"]);
+mk_body(systemtap, 'port-inactive', _, _) ->
+    fl(["\tprintf(\"{ 'inactive', %s, %d }\\n\",",
+        " user_string($arg1), $arg2);\n"]);
+mk_body(systemtap, 'port-open', _, _) ->
+    fl(["\tprintf(\"{ 'open', %s, '%s', %s, %d }\\n\",",
+        " user_string($arg1), user_string($arg2), user_string($arg3),",
+        "  $arg4);\n"]);
+mk_body(systemtap, 'process-active', _, _) ->
+    fl(["\tprintf(\"{ 'active', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'process-exclusive_active', _, _) ->
+    fl(["\tprintf(\"{ 'active', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'process-exclusive_inactive', _, _) ->
+    fl(["\tprintf(\"{ 'inactive', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'process-exit', _, _) ->
+    fl(["\tprintf(\"{ 'exit', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'process-inactive', _, _) ->
+    fl(["\tprintf(\"{ 'inactive', %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'process-registered', _, _) ->
+    fl(["\tprintf(\"{ 'register', %s, '%s', %d }\\n\",",
+        " user_string($arg1), user_string($arg2), $arg3);\n"]);
+mk_body(systemtap, 'process-scheduled', _, Flags) ->
+    case contains(Flags, sched) of
+        true  -> fl(["\tprintf(\"{ 'in', %s, \\\"%s\\\", %d, %d }\\n\",",
+                    " user_string($arg1), user_string($arg2), $arg3, $arg4);",
+                    "\n"]);
+        false -> fl(["\tprintf(\"{ 'in', %s, \\\"%s\\\", %d }\\n\",",
+                     " user_string($arg1), user_string($arg2), $arg3);\n"])
+    end;
+mk_body(systemtap, 'process-spawn', _, _) ->
+    fl(["\tprintf(\"{ 'spawn', %s, %s, \\\"%s\\\", %d }\\n\",",
+        " user_string($arg1), user_string($arg2), user_string($arg3),",
+        " $arg4);\n"]);
+mk_body(systemtap, 'process-unscheduled', _, Flags) ->
+    case contains(Flags, sched) of
+        true  -> fl(["\tprintf(\"{ 'out', %s, \\\"%s\\\", %d, %d }\\n\",",
+                    " user_string($arg1), user_string($arg2), $arg3, $arg4);",
+                    "\n"]);
+        false -> fl(["\tprintf(\"{ 'out', %s, \\\"%s\\\", %d }\\n\",",
+                     " user_string($arg1), user_string($arg2), $arg3);\n"])
+    end;
+mk_body(systemtap, 'scheduler-active', _, _) ->
+    fl(["\tprintf(\"{ 'active', %d, %d }\\n\",",
+        " $arg1, $arg2);\n"]);
+mk_body(systemtap, 'scheduler-inactive', _, _) ->
+    fl(["\tprintf(\"{ 'inactive', %d, %d }\\n\",",
+        " $arg1, $arg2);\n"]).
 
 save_script(S) ->
-    SFN =
-      filename:join(["/tmp/", test_server:make_temp("percept2-trace-script-")]),
+    SFN = filename:join(["/tmp/", 
+                         test_server:temp_name("percept2-trace-script-")]),
     {ok, SF} = file:open(SFN, [write, raw]),
     ok = file:write(SF, S),
     file:close(SF),
@@ -210,3 +214,9 @@ get_vm_executable() ->
 %% Auxiliary functions
 fl(L) -> 
     lists:flatten(L).
+contains([], _) ->
+    false;
+contains([H|_], E) when H == E ->
+    true;
+contains([_|T], E) ->
+    contains(T, E).
