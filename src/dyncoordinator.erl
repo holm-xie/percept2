@@ -18,6 +18,7 @@ do_start_profile(Ns, FN, Opts) ->
     C = spawn_collector(FN),
     start_collector(C),
     PsOnNs = spawn_profilers(Ns, C, Opts),
+    io:format("Done with profilers~n"),
     {PNs, Ps} = lists:unzip(PsOnNs),
     start_profilers(Ps),
     save_profile_details({PNs, Ps, C}),

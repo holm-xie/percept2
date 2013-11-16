@@ -122,7 +122,6 @@ stop() ->
     	undefined -> 
 	    {error, not_started};
 	Port ->
-            io:format("ccc~n"),
 	    erlang:port_command(Port, 
                                 erlang:term_to_binary({profile_stop, erlang:now()})),
             erlang:port_close(Port),

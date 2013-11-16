@@ -413,12 +413,12 @@ dt_parse_and_insert_loop([FPrb|FPrbs], C, FN, SubDB, T0, Count) ->
     SubDB ! M,
     dt_parse_and_insert_loop(FPrbs, C, FN, SubDB, T0, Count + 1).
 
-line2msg({active, P, MFA, Ts}) ->
+line2msg({active, P, MFA, Ts}) when is_binary(P) ->
     {profile, binary_to_term(P), active, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({active, P, Ts}) when is_binary(P) ->
+line2msg({active, P, Ts}) ->
     {profile, binary_to_term(P), active, 0, dtts2ts(Ts)};
-line2msg({active, S, Ts}) ->
-    {profile, scheduler, S, active, 0, dtts2ts(Ts)};
+line2msg({active, S, AS, Ts}) ->
+    {profile, scheduler, S, active, AS, dtts2ts(Ts)};
 line2msg({call, P, MFA, Ts}) ->
     {trace_ts, binary_to_term(P), call, dtmfa2mfa(MFA), dtts2ts(Ts)};
 line2msg({closed, P, Reason, Ts}) ->
@@ -433,12 +433,12 @@ line2msg({in, P, MFA, S, Ts}) ->
     {trace_ts, binary_to_term(P), in, S, dtmfa2mfa(MFA), dtts2ts(Ts)};
 line2msg({in, P, MFA, Ts}) ->
     {trace_ts, binary_to_term(P), in, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({inactive, P, MFA, Ts}) ->
+line2msg({inactive, P, MFA, Ts}) when is_binary(P) ->
     {profile, binary_to_term(P), inactive, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({inactive, P, Ts}) when is_binary(P)->
+line2msg({inactive, P, Ts}) ->
     {profile, binary_to_term(P), inactive, 0, dtts2ts(Ts)};
-line2msg({inactive, S, Ts}) ->
-    {profile, scheduler, S, inactive, 0, dtts2ts(Ts)};
+line2msg({inactive, S, AS, Ts}) ->
+    {profile, scheduler, S, inactive, AS, dtts2ts(Ts)};
 line2msg({open, O, Name, P, Ts}) ->
     {trace_ts, binary_to_term(O), open, binary_to_term(P), Name, dtts2ts(Ts)};
 line2msg({out, P, MFA, S, Ts}) ->
