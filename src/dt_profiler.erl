@@ -1,30 +1,29 @@
--module(dynprofiler).
+-module(dt_profiler).
 
--export([run/2]).
+-export([init/2]).
 
-run(Coordinator, Opts) ->
+init(Opts, Collector) ->
     DTFramework = erlang:system_info(dynamic_trace),
-    % XXX: DTFramework should never be 'none' here (already handled in
-    % dyncoordinator.erl).
     {Prbs, Mods, Flags} = opts2prbs(Opts),
     Script  = gen_script(DTFramework, Prbs, Mods, Flags),
     ScriptF = save_script(Script),
-    loop(DTFramework, ScriptF, Coordinator).
+    loop(DTFramework, ScriptF, Collector).
 
-loop(DTFramework, ScriptF, Coordinator) ->
+loop(DTFramework, ScriptF, Collector) ->
     receive
         start ->
             Cmd = fmt_command(DTFramework, ScriptF),
             P = open_port({spawn, Cmd}, [{line, 1024}]),
             put(port, P),
-            loop(DTFramework, ScriptF, Coordinator);
+            loop(DTFramework, ScriptF, Collector);
         stop  ->
             P = get(port),
             true = port_close(P),
-            ok = file:delete(ScriptF);
+            ok = file:delete(ScriptF),
+            Collector ! stop;
         {_, {data, {eol, Data}}} ->
-            Coordinator ! {self(), Data},
-            loop(DTFramework, ScriptF, Coordinator)
+            Collector ! {self(), Data},
+            loop(DTFramework, ScriptF, Collector)
     end.
 
 opts2prbs(Opts) ->
@@ -232,7 +231,6 @@ get_vm_executable() ->
         _        -> "beam.smp"
     end.
 
-%% Auxiliary functions
 fl(L) -> 
     lists:flatten(L).
 contains([], _) ->

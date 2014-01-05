@@ -35,9 +35,10 @@ RELSYSDIR = $(RELEASE_PATH)/lib/percept2-$(VSN)
 # ----------------------------------------------------
 
 MODULES= \
-	dyncoordinator \
-	dynprofiler \
-	dyntranslator \
+	dt_analyzer \
+	dt_collector \
+	dt_coordinator \
+	dt_profiler \
 	egd \
         egd_font \
  	egd_png \

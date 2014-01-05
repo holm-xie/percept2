@@ -64,7 +64,7 @@
          dt_analyze/1]).
 
 %% Application callback functions.
--export([start/2, stop/1, parse_and_insert/3, dt_parse_and_insert/3]).
+-export([start/2, stop/1, parse_and_insert/3]).
 
 -compile(export_all).
 
@@ -322,27 +322,63 @@ flush() ->
             ok
     end.
 
-dt_start_profile(FN, []) ->
-    dt_start_profile(FN, [procs]);
-dt_start_profile(FN, Opts) ->
-    dt_start_profile([node()], FN, Opts).
+dt_start_profile(FileSpec, []) ->
+    dt_start_profile(FileSpec, [procs]);
+dt_start_profile(FileSpec, Opts) ->
+    dt_start_profile([node()], FileSpec, Opts).
 
-dt_start_profile(Nds, FN, Opts) ->
-    dyncoordinator:start_profile(Nds, FN, Opts).
-
-dt_stop_profile() ->
-    dyncoordinator:stop_profile().
-
-dt_analyze(FNs) ->
-    case percept2_db:start(FNs) of
-        {started, FNsSubDBs} ->
-            dt_do_analyze(FNsSubDBs);
-        {restarted, FNsSubDBs} ->
-            dt_do_analyze(FNsSubDBs)
+dt_start_profile(Nodes, FileSpec, Opts) ->
+    case dt_profile_already_started() of
+        false -> dt_do_start_profile(Nodes, FileSpec, Opts);
+        true  -> {error, already_started}
     end.
 
-dt_do_analyze(FNsSubDBs) ->
-    Self = self(),
+dt_profile_already_started() ->
+    case erlang:whereis(percept2_dt_coordinator) of
+        undefined -> false;
+        _         -> true
+    end.
+
+dt_do_start_profile(Nodes, FileSpec, Opts) ->
+    {C, M} = spawn_monitor(dt_coordinator, init, [Nodes, FileSpec, Opts]),
+    erlang:register(percept2_dt_coordinator, C),
+    C ! {start, self()},
+    receive
+        {started, ProfiledNodes}  ->
+            erlang:demonitor(M),
+            {started, ProfiledNodes};
+        {'DOWN', _, _, _, Reason} ->
+            {error, Reason}
+    end.
+
+dt_stop_profile() ->
+    case dt_profile_already_started() of
+        false -> {error, not_started};
+        true  -> dt_do_stop_profile()
+    end.
+
+dt_do_stop_profile() ->
+    C = erlang:whereis(percept2_dt_coordinator),
+    M = erlang:monitor(process, C),
+    C ! {stop, self()},
+    receive 
+        {stopped, ProfiledNodes}  -> 
+            erlang:demonitor(M),
+            {stopped, ProfiledNodes};
+        {'DOWN', _, _, _, Reason} ->
+            {error, Reason}
+    end.
+
+dt_analyze({Prefix, Suffix}) ->
+    Filenames = filelib:wildcard(Prefix ++ "*." ++ Suffix),
+    case percept2_db:start(Filenames) of
+        {started, SubDBs} ->
+            dt_do_analyze(SubDBs);
+        {restarted, SubDBs} ->
+            dt_do_analyze(SubDBs)
+    end.
+
+dt_do_analyze(SubDBs) ->
     process_flag(trap_exit, true),
     case whereis(percept_httpd) of
         undefined ->
@@ -351,129 +387,8 @@ dt_do_analyze(FNsSubDBs) ->
             TmpDir = get_svg_alias_dir(),
             rm_tmp_files(TmpDir)
     end,
-    Anlzrs = lists:foldl(fun({FN, SubDB}, Pids) ->
-                             Pid = spawn_link(?MODULE, dt_parse_and_insert, [FN, SubDB, Self]),
-                             receive
-                                 {started, {FN, SubDB}} ->
-                                     [Pid | Pids]
-                             end
-                         end, [], FNsSubDBs),
-    dt_loop_analyzers(Anlzrs).
+    dt_analyzer:analyze(SubDBs).
 
-dt_loop_analyzers(Anlzrs) ->
-    receive
-        {Pid, done} ->
-            Pid ! {ack, self()},
-            case Anlzrs -- [Pid] of
-                [] ->
-                    try percept2_db:consolidate_db()
-                    catch _E1:_E2 -> ok
-                    end,
-                    io:format("    ~p created processes.~n",
-                              [percept2_db:select({information, procs_count})]),
-                    io:format("    ~p opened ports.~n",
-                              [percept2_db:select({information, ports_count})]);
-                AnlzrsLeft ->
-                    dt_loop_analyzers(AnlzrsLeft)
-            end;
-        {error, Reason} ->
-            percept2_db:stop(percept2_db),
-            flush(),
-            {error, Reason};
-        _Other ->
-            dt_loop_analyzers(Anlzrs)
-    end.
-
-dt_parse_and_insert(FN, SubDB, C) ->
-    io:format("Parsing: ~p ~n", [FN]),
-    T0 = erlang:now(),
-    C ! {started, {FN, SubDB}},
-    case file:consult(FN) of
-        {ok, FPrbs}     -> 
-            dt_parse_and_insert_loop(FPrbs, C, FN, SubDB, T0, 0);
-        {error, Reason} -> 
-            C ! {error, Reason}
-    end.
-
-dt_parse_and_insert_loop([], C, FN, SubDB, T0, Count) ->
-    SubDB ! {insert, {trace_ts, self(), end_of_trace}},
-    receive
-        {SubDB, done} ->
-            T1 = erlang:now(),
-            io:format("Parsed ~p entries from ~p in ~p secs.~n", [Count, FN, ?seconds(T1, T0)]),
-            C ! {self(), done},
-            receive
-                {ack, C} ->
-                    ok
-            end
-    end;
-dt_parse_and_insert_loop([FPrb|FPrbs], C, FN, SubDB, T0, Count) ->
-    TM = line2msg(FPrb),
-    M = {insert, TM},
-    SubDB ! M,
-    dt_parse_and_insert_loop(FPrbs, C, FN, SubDB, T0, Count + 1).
-
-line2msg({active, P, MFA, Ts}) when is_binary(P) ->
-    {profile, binary_to_term(P), active, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({active, P, Ts}) ->
-    {profile, binary_to_term(P), active, 0, dtts2ts(Ts)};
-line2msg({active, S, AS, Ts}) ->
-    {profile, scheduler, S, active, AS, dtts2ts(Ts)};
-line2msg({call, P, MFA, Ts}) ->
-    {trace_ts, binary_to_term(P), call, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({closed, P, Reason, Ts}) ->
-    {trace_ts, binary_to_term(P), Reason, dtts2ts(Ts)};
-line2msg({exit, P, Reason, Ts}) ->
-    {trace_ts, binary_to_term(P), exit, Reason, dtts2ts(Ts)};
-line2msg({gc_start, P, Ts}) ->
-    {trace_ts, binary_to_term(P), gc_start, [], dtts2ts(Ts)};
-line2msg({gc_end, P, Ts}) ->
-    {trace_ts, binary_to_term(P), gc_end, [], dtts2ts(Ts)};
-line2msg({in, P, MFA, S, Ts}) ->
-    {trace_ts, binary_to_term(P), in, S, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({in, P, MFA, Ts}) ->
-    {trace_ts, binary_to_term(P), in, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({inactive, P, MFA, Ts}) when is_binary(P) ->
-    {profile, binary_to_term(P), inactive, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({inactive, P, Ts}) ->
-    {profile, binary_to_term(P), inactive, 0, dtts2ts(Ts)};
-line2msg({inactive, S, AS, Ts}) ->
-    {profile, scheduler, S, inactive, AS, dtts2ts(Ts)};
-line2msg({open, O, Name, P, Ts}) ->
-    {trace_ts, binary_to_term(O), open, binary_to_term(P), Name, dtts2ts(Ts)};
-line2msg({out, P, MFA, S, Ts}) ->
-    {trace_ts, binary_to_term(P), out, S, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({out, P, MFA, Ts}) ->
-    {trace_ts, binary_to_term(P), out, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg(L={profile_start, _}) ->
-    L;
-line2msg(L={profile_stop, _}) ->
-    L;
-line2msg({'receive', S, Sz, Ts}) ->
-    {trace_ts, binary_to_term(S), 'receive', "", Sz, dtts2ts(Ts)};
-line2msg({register, P, Name, Ts}) ->
-    {trace_ts, binary_to_term(P), register, Name, dtts2ts(Ts)};
-line2msg({return_to, P, MFA, Ts}) ->
-    {trace_ts, binary_to_term(P), return_to, dtmfa2mfa(MFA), dtts2ts(Ts)};
-line2msg({send, S, R, Sz, Ts}) ->
-    {trace_ts, binary_to_term(S), send, "", Sz, binary_to_term(R), dtts2ts(Ts)};
-line2msg({spawn, P, Parent, MFA, Ts}) ->
-    {trace_ts, binary_to_term(Parent), spawn, binary_to_term(P), dtmfa2mfa(MFA), dtts2ts(Ts)}.
-
-dtmfa2mfa(DTMFA) when DTMFA == "0" orelse DTMFA == "<exiting>" ->
-    0;
-dtmfa2mfa(DTMFA) ->
-    {M, [$:|DTFA]} = lists:splitwith(fun(C) -> C /= $: end, DTMFA),
-    {F, [$/|A]} = lists:splitwith(fun(C) -> C /= $/ end, DTFA),
-    {list_to_atom(M), list_to_atom(F), list_to_integer(A)}.
-
-dtts2ts(DTTs) ->
-   US = DTTs rem 1000000,
-   SS = DTTs div 1000000,
-   MS = SS div 1000000,
-   S = SS rem 1000000,
-   {MS, S, US}.
-   
 %% @spec start_webserver() -> {started, Hostname, Port} | {error, Reason}
 %%	Hostname = string()
 %%	Port = integer()
